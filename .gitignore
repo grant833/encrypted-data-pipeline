@@ -1,0 +1,55 @@
+# Secrets
+.env
+*.pem
+*.key
+*.asc
+gpg_keys/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Airflow
+airflow/
+airflow.cfg
+airflow.db
+webserver_config.py
+logs/
+
+# Data — never commit data files
+data/
+*.csv
+*.tsv
+*.pgp
+*.gpg
+!data_gen/sample_layouts/*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# Streamlit
+.streamlit/
+
+# Local logs
+*.log
