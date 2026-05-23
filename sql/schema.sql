@@ -1,117 +1,106 @@
 -- ============================================================================
--- Pipeline Project — Warehouse Schema
+-- Encrypted Data Pipeline — Warehouse Schema
 -- ============================================================================
--- Mirrors the table layouts used in production at Acxiom for the application
--- feed processing chain. All data is synthetic.
+-- Generic consumer finance data pipeline. All data is synthetic.
 -- ============================================================================
 
 
--- ----------------------------------------------------------------------------
--- Warehouse: Application table (mirrors WH_CL_APPLICATION)
--- ----------------------------------------------------------------------------
-DROP TABLE IF EXISTS wh_cl_application CASCADE;
-CREATE TABLE wh_cl_application (
-    record_id          SERIAL PRIMARY KEY,
-    data_collection_id VARCHAR(50)  NOT NULL,
-    data_src_cd        VARCHAR(20)  DEFAULT 'APPLICATIONS',
-    ek_data_src_cd     VARCHAR(20)  DEFAULT 'BREAD',
-    application_id     VARCHAR(20)  UNIQUE NOT NULL,
-    acct_id            VARCHAR(25),
-    indiv_id           BIGINT,
-    first_name         VARCHAR(50),
-    middle_init        VARCHAR(1),
-    last_name          VARCHAR(50),
-    str_addr           VARCHAR(100),
-    city               VARCHAR(20),
-    state              VARCHAR(2),
-    zip_cd             VARCHAR(5),
-    div_no             INTEGER,
-    entry_date         DATE,
-    app_status_flag    VARCHAR(1),
-    email_addr         VARCHAR(80),
-    birth_date         DATE,
-    load_timestamp     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+-- Customer applications table (main warehouse target)
+DROP TABLE IF EXISTS customer_applications CASCADE;
+CREATE TABLE customer_applications (
+    record_id            SERIAL PRIMARY KEY,
+    pipeline_run_id      VARCHAR(50)  NOT NULL,
+    source_system        VARCHAR(20)  DEFAULT 'NORTHSTAR_FINANCIAL',
+    application_id       VARCHAR(20)  UNIQUE NOT NULL,
+    customer_id          VARCHAR(25),
+    identity_id          BIGINT,
+    first_name           VARCHAR(50),
+    middle_initial       VARCHAR(1),
+    last_name            VARCHAR(50),
+    street_address       VARCHAR(100),
+    city                 VARCHAR(20),
+    state                VARCHAR(2),
+    zip_code             VARCHAR(5),
+    division_id          INTEGER,
+    submitted_date       DATE,
+    application_status   VARCHAR(20),
+    email_address        VARCHAR(80),
+    date_of_birth        DATE,
+    load_timestamp       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_wh_cl_app_run        ON wh_cl_application (data_collection_id);
-CREATE INDEX idx_wh_cl_app_indiv      ON wh_cl_application (indiv_id);
-CREATE INDEX idx_wh_cl_app_email      ON wh_cl_application (email_addr);
+CREATE INDEX idx_cust_app_run    ON customer_applications (pipeline_run_id);
+CREATE INDEX idx_cust_app_ident  ON customer_applications (identity_id);
+CREATE INDEX idx_cust_app_email  ON customer_applications (email_address);
 
 
--- ----------------------------------------------------------------------------
--- Warehouse: Identity table (mirrors WH_IDENTITY)
--- ----------------------------------------------------------------------------
-DROP TABLE IF EXISTS wh_identity CASCADE;
-CREATE TABLE wh_identity (
-    indiv_id              BIGSERIAL PRIMARY KEY,
-    source_hash           VARCHAR(64) UNIQUE NOT NULL,
-    data_src_cd           VARCHAR(20),
-    abilitec_consumerlink VARCHAR(50),
+-- Identity resolution table
+DROP TABLE IF EXISTS identities CASCADE;
+CREATE TABLE identities (
+    identity_id           BIGSERIAL PRIMARY KEY,
+    identity_hash         VARCHAR(64) UNIQUE NOT NULL,
+    source_system         VARCHAR(20),
+    external_match_id     VARCHAR(50),
     first_name            VARCHAR(50),
     last_name             VARCHAR(50),
-    str_addr              VARCHAR(100),
+    street_address        VARCHAR(100),
     city                  VARCHAR(20),
     state                 VARCHAR(2),
-    zip_cd                VARCHAR(5),
-    email                 VARCHAR(80),
+    zip_code              VARCHAR(5),
+    email_address         VARCHAR(80),
     year_of_birth         VARCHAR(4),
     first_seen_timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_seen_timestamp   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE INDEX idx_wh_identity_hash ON wh_identity (source_hash);
+CREATE INDEX idx_identity_hash ON identities (identity_hash);
 
 
--- ----------------------------------------------------------------------------
--- Suppression tables
--- ----------------------------------------------------------------------------
-DROP TABLE IF EXISTS ccpa_donotsell CASCADE;
-CREATE TABLE ccpa_donotsell (
-    casenumber    VARCHAR(20) PRIMARY KEY,
-    email_addr    VARCHAR(80) NOT NULL,
-    first_name    VARCHAR(50),
-    last_name     VARCHAR(50),
-    request_date  TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
+-- Privacy suppression — opt-outs
+DROP TABLE IF EXISTS privacy_opt_outs CASCADE;
+CREATE TABLE privacy_opt_outs (
+    case_number    VARCHAR(20) PRIMARY KEY,
+    email_address  VARCHAR(80) NOT NULL,
+    first_name     VARCHAR(50),
+    last_name      VARCHAR(50),
+    request_date   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX idx_ccpa_donotsell_email ON ccpa_donotsell (email_addr);
+CREATE INDEX idx_opt_outs_email ON privacy_opt_outs (email_address);
 
 
-DROP TABLE IF EXISTS ccpa_delete CASCADE;
-CREATE TABLE ccpa_delete (
-    casenumber    VARCHAR(20) PRIMARY KEY,
-    email_addr    VARCHAR(80) NOT NULL,
-    request_date  TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
+-- Privacy suppression — delete requests
+DROP TABLE IF EXISTS privacy_deletes CASCADE;
+CREATE TABLE privacy_deletes (
+    case_number    VARCHAR(20) PRIMARY KEY,
+    email_address  VARCHAR(80) NOT NULL,
+    request_date   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP
 );
-CREATE INDEX idx_ccpa_delete_email ON ccpa_delete (email_addr);
+CREATE INDEX idx_deletes_email ON privacy_deletes (email_address);
 
 
-DROP TABLE IF EXISTS credit_abusers CASCADE;
-CREATE TABLE credit_abusers (
+-- Fraud watchlist
+DROP TABLE IF EXISTS fraud_watchlist CASCADE;
+CREATE TABLE fraud_watchlist (
     application_id  VARCHAR(20) PRIMARY KEY,
-    flagged_reason  VARCHAR(100),
+    flag_reason     VARCHAR(100),
     load_date       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 
--- ----------------------------------------------------------------------------
--- Suppression exclusions log — every record excluded by the engine
--- ----------------------------------------------------------------------------
+-- Suppression exclusions log
 DROP TABLE IF EXISTS suppression_exclusions CASCADE;
 CREATE TABLE suppression_exclusions (
     exclusion_id        BIGSERIAL PRIMARY KEY,
     pipeline_run_id     VARCHAR(50) NOT NULL,
     application_id      VARCHAR(20),
-    email_addr          VARCHAR(80),
+    email_address       VARCHAR(80),
     suppression_source  VARCHAR(50),
     excluded_timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
 CREATE INDEX idx_supp_exc_run ON suppression_exclusions (pipeline_run_id);
 
 
--- ----------------------------------------------------------------------------
--- Rejected records — every record that failed reject rules
--- ----------------------------------------------------------------------------
+-- Rejected records log
 DROP TABLE IF EXISTS rejected_records CASCADE;
 CREATE TABLE rejected_records (
     reject_id           BIGSERIAL PRIMARY KEY,
@@ -121,13 +110,10 @@ CREATE TABLE rejected_records (
     raw_record          JSONB,
     rejected_timestamp  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
 CREATE INDEX idx_rejected_run ON rejected_records (pipeline_run_id);
 
 
--- ----------------------------------------------------------------------------
--- Pipeline audit log — one row per stage per run
--- ----------------------------------------------------------------------------
+-- Pipeline audit log
 DROP TABLE IF EXISTS pipeline_audit_log CASCADE;
 CREATE TABLE pipeline_audit_log (
     audit_id           BIGSERIAL PRIMARY KEY,
@@ -142,6 +128,5 @@ CREATE TABLE pipeline_audit_log (
     error_message      TEXT,
     run_timestamp      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
 CREATE INDEX idx_audit_run  ON pipeline_audit_log (pipeline_run_id);
 CREATE INDEX idx_audit_feed ON pipeline_audit_log (feed_name, run_timestamp);

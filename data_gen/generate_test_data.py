@@ -1,20 +1,17 @@
 """
-Synthetic data generator using faker.
+Synthetic data generator for the encrypted data pipeline project.
 
-Generates realistic-looking but completely fake application files matching
-the structure of real Bread Financial feeds. No real PII anywhere.
+Generates fake customer application data for a fictional consumer finance
+company ("Northstar Financial"). No real PII anywhere — all data produced
+by the faker library.
 
 Usage:
     python data_gen/generate_test_data.py --records 50000 --output ./data/
-
-Outputs:
-    - BF_Applications_YYYYMMDD.txt   (pipe-delimited, like real feeds)
-    - BF_Suppressions_YYYYMMDD.csv
-    - BF_CreditAbusers_YYYYMMDD.csv
 """
 
 import argparse
 import random
+import string
 from datetime import datetime
 from pathlib import Path
 
@@ -22,71 +19,102 @@ import pandas as pd
 from faker import Faker
 
 fake = Faker()
-Faker.seed(42)  # Reproducible runs
+Faker.seed(42)
+random.seed(42)
 
 
-# Field layout matching the actual Bread application feed
-APPLICATION_FIELDS = [
-    "First_Name",
-    "Middle_Init",
-    "Last_Name",
-    "Str_Addr",
-    "City",
-    "State",
-    "Zip_Cd",
-    "Application_ID",
-    "Acct_ID",
-    "Div_No",
-    "Entry_Date",
-    "App_Status_Flag",
-    "email_addr",
-    "birth_date",
-]
+def generate_application_id() -> str:
+    """Generate a customer application ID."""
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=14))
+    return f"APP-{suffix}"
+
+
+def generate_customer_id() -> str:
+    """Generate a customer account ID."""
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=17))
+    return f"CUST-{suffix}"
 
 
 def generate_application_record() -> dict:
-    """Generate a single fake application record."""
-    # TODO: Use fake.first_name(), fake.last_name(), fake.street_address(), etc.
-    # TODO: Generate Application_ID with a recognizable prefix (e.g., 'APP-')
-    # TODO: Randomize App_Status_Flag among ['A', 'D', 'U']
-    raise NotImplementedError
+    """Generate a single fake customer application record."""
+    first = fake.first_name()
+    last = fake.last_name()
+    return {
+        "first_name": first,
+        "middle_initial": random.choice(string.ascii_uppercase),
+        "last_name": last,
+        "street_address": fake.street_address()[:100],
+        "city": fake.city()[:20],
+        "state": fake.state_abbr(),
+        "zip_code": fake.zipcode()[:5],
+        "application_id": generate_application_id(),
+        "customer_id": generate_customer_id(),
+        "division_id": random.randint(100, 999),
+        "submitted_date": fake.date_between(start_date="-1y", end_date="today").isoformat(),
+        "application_status": random.choices(["approved", "declined", "under_review"], weights=[70, 20, 10])[0],
+        "email_address": f"{first.lower()}.{last.lower()}@{fake.free_email_domain()}"[:80],
+        "date_of_birth": fake.date_of_birth(minimum_age=18, maximum_age=85).isoformat(),
+    }
 
 
 def generate_application_file(num_records: int = 10000) -> pd.DataFrame:
-    """Generate a full application file dataframe."""
-    # TODO: Loop and build list of records, return as DataFrame
-    raise NotImplementedError
+    """Generate a full customer application file."""
+    records = [generate_application_record() for _ in range(num_records)]
+    return pd.DataFrame(records)
 
 
 def generate_suppression_file(num_records: int = 500) -> pd.DataFrame:
-    """Generate a CCPA suppression file."""
-    # TODO: Generate records with casenumber, email, name fields
-    raise NotImplementedError
+    """Generate a privacy suppression file (CCPA opt-outs and deletes)."""
+    records = []
+    for i in range(num_records):
+        first = fake.first_name()
+        last = fake.last_name()
+        records.append({
+            "case_number": f"PRIV-{str(i).zfill(8)}",
+            "email_address": f"{first.lower()}.{last.lower()}@{fake.free_email_domain()}",
+            "first_name": first,
+            "last_name": last,
+            "request_type": random.choice(["opt_out", "delete"]),
+        })
+    return pd.DataFrame(records)
 
 
-def generate_credit_abuser_file(num_records: int = 100) -> pd.DataFrame:
-    """Generate a credit abuser file."""
-    # TODO: Generate records with application_id and flagged_reason
-    raise NotImplementedError
+def generate_fraud_list_file(num_records: int = 100) -> pd.DataFrame:
+    """Generate a fraud watchlist file."""
+    records = []
+    for _ in range(num_records):
+        records.append({
+            "application_id": generate_application_id(),
+            "flag_reason": random.choice([
+                "fraudulent_application",
+                "repeated_declines",
+                "identity_theft_flag",
+                "synthetic_identity",
+            ]),
+        })
+    return pd.DataFrame(records)
 
 
 def inject_bad_records(df: pd.DataFrame, bad_pct: float = 0.03) -> pd.DataFrame:
-    """
-    Inject intentionally bad records to test the reject rules engine.
+    """Inject intentionally bad records to test the reject rules engine."""
+    num_bad = int(len(df) * bad_pct)
+    bad_indices = random.sample(range(len(df)), num_bad)
 
-    Mutations to add:
-        - Null Application_IDs
-        - Invalid status flags (e.g., 'X' instead of A/D/U)
-        - Over-length state codes
-        - Malformed zip codes
-        - Over-length email addresses
-    """
-    # TODO: Sample bad_pct of records and mutate them
-    raise NotImplementedError
+    for i, idx in enumerate(bad_indices):
+        mutation = i % 4
+        if mutation == 0:
+            df.at[idx, "application_id"] = ""
+        elif mutation == 1:
+            df.at[idx, "application_status"] = "INVALID_STATUS"
+        elif mutation == 2:
+            df.at[idx, "state"] = "GEORGIA"
+        elif mutation == 3:
+            df.at[idx, "zip_code"] = "ABCDE"
+
+    return df
 
 
 def write_pipe_delimited(df: pd.DataFrame, output_path: str) -> None:
-    """Write dataframe as pipe-delimited file (matches real feed format)."""
     df.to_csv(output_path, sep="|", index=False)
 
 
@@ -94,19 +122,35 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--records", type=int, default=10000)
     parser.add_argument("--output", type=str, default="./data/")
-    parser.add_argument("--inject-bad", action="store_true",
-                        help="Inject 3% bad records for reject rule testing")
+    parser.add_argument("--inject-bad", action="store_true")
     args = parser.parse_args()
 
-    Path(args.output).mkdir(parents=True, exist_ok=True)
+    output_dir = Path(args.output)
+    output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d")
 
-    # TODO: Generate application file
-    # TODO: Optionally inject bad records
-    # TODO: Write pipe-delimited file to output dir
-    # TODO: Generate suppression and credit abuser files
+    print(f"Generating {args.records:,} customer application records...")
+    app_df = generate_application_file(args.records)
+    if args.inject_bad:
+        print("Injecting 3% intentionally bad records...")
+        app_df = inject_bad_records(app_df)
+    app_path = output_dir / f"customer_applications_{timestamp}.txt"
+    write_pipe_delimited(app_df, str(app_path))
+    print(f"  -> {app_path}")
 
-    print(f"Generated {args.records} records to {args.output}")
+    print("\nGenerating privacy suppression file (500 records)...")
+    supp_df = generate_suppression_file(500)
+    supp_path = output_dir / f"privacy_suppressions_{timestamp}.csv"
+    supp_df.to_csv(supp_path, index=False)
+    print(f"  -> {supp_path}")
+
+    print("\nGenerating fraud watchlist file (100 records)...")
+    fraud_df = generate_fraud_list_file(100)
+    fraud_path = output_dir / f"fraud_watchlist_{timestamp}.csv"
+    fraud_df.to_csv(fraud_path, index=False)
+    print(f"  -> {fraud_path}")
+
+    print(f"\nDone. All files written to {output_dir}/")
 
 
 if __name__ == "__main__":
