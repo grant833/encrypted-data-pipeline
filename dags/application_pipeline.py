@@ -1,11 +1,11 @@
 """
 Customer Application Pipeline DAG.
 
-Encrypted end-to-end:
-    Vendor encrypts file with inbound public key, drops to inbound/
-    -> ingest_file decrypts with inbound private key
+End-to-end encrypted, cloud-integrated:
+    Vendor encrypts file with inbound key, uploads to S3 inbound bucket
+    -> ingest_file downloads from S3, decrypts with private key
     -> reject_rules -> suppression -> identity_resolution -> load -> audit
-    -> encrypt_outbound (encrypts summary with vendor public key)
+    -> encrypt_outbound (encrypts summary, uploads to S3 outbound bucket)
     -> send_alert
 """
 
@@ -31,14 +31,17 @@ from pipeline.loader import load_to_postgres
 from pipeline.audit import run_audit_queries, write_audit_log
 from pipeline.alerting import send_success_alert, airflow_failure_callback
 from pipeline.encryption import decrypt_file, encrypt_file
+from pipeline.s3_utils import (
+    download_file as s3_download,
+    upload_file as s3_upload,
+    get_latest_object,
+)
 
 logger = logging.getLogger(__name__)
 
 POSTGRES_CONN_STRING = (
     "postgresql+psycopg2://pipeline_user:Tesla2345!@localhost/pipeline_db"
 )
-INBOUND_DIR = "/home/grant/pipeline-project/data/inbound"
-OUTBOUND_DIR = "/home/grant/pipeline-project/data/outbound"
 TEMP_DIR = "/tmp/pipeline_runs"
 FEED_NAME = "customer_applications"
 
@@ -64,12 +67,12 @@ def _temp_path(pipeline_run_id: str, stage: str, ext: str = "parquet") -> str:
 
 @dag(
     dag_id="customer_application_pipeline",
-    description="End-to-end encrypted customer application data pipeline",
+    description="End-to-end encrypted customer application data pipeline (S3-integrated)",
     schedule="0 3 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,
-    tags=["customer_applications", "encrypted", "northstar_financial"],
+    tags=["customer_applications", "encrypted", "s3", "northstar_financial"],
 )
 def customer_application_pipeline():
 
@@ -81,21 +84,39 @@ def customer_application_pipeline():
 
     @task
     def ingest_file(pipeline_run_id: str) -> str:
-        """Find latest encrypted .pgp file, decrypt it, return plaintext path."""
+        """
+        Find latest .pgp file in S3 inbound bucket, download it, decrypt it,
+        and parse the plaintext into a dataframe.
+        """
         engine = _get_engine()
 
-        # Find newest .pgp file in inbound/
-        encrypted_files = sorted(Path(INBOUND_DIR).glob("*.pgp"))
-        if not encrypted_files:
-            raise FileNotFoundError(f"No .pgp files found in {INBOUND_DIR}")
-        encrypted_input = encrypted_files[-1]
-        logger.info(f"Ingesting encrypted file: {encrypted_input.name}")
+        inbound_bucket = os.getenv("S3_INBOUND_BUCKET")
+        if not inbound_bucket:
+            raise RuntimeError("S3_INBOUND_BUCKET env var not set")
 
-        # Decrypt to a temp location
-        decrypted_path = _temp_path(pipeline_run_id, "decrypted_input", ext="txt")
-        ok = decrypt_file(str(encrypted_input), decrypted_path)
+        # Find the most recent .pgp file in the inbound bucket
+        latest = get_latest_object(inbound_bucket)
+        if not latest:
+            raise FileNotFoundError(
+                f"No objects found in s3://{inbound_bucket}/"
+            )
+
+        logger.info(
+            f"Latest inbound: {latest['Key']} "
+            f"({latest['Size']:,} bytes, {latest['LastModified']})"
+        )
+
+        # Download the encrypted file to a temp location
+        encrypted_path = _temp_path(pipeline_run_id, "encrypted_input", ext="pgp")
+        ok = s3_download(inbound_bucket, latest["Key"], encrypted_path)
         if not ok:
-            raise RuntimeError(f"Failed to decrypt {encrypted_input}")
+            raise RuntimeError(f"Failed to download s3://{inbound_bucket}/{latest['Key']}")
+
+        # Decrypt
+        decrypted_path = _temp_path(pipeline_run_id, "decrypted_input", ext="txt")
+        ok = decrypt_file(encrypted_path, decrypted_path)
+        if not ok:
+            raise RuntimeError(f"Failed to decrypt {encrypted_path}")
         logger.info(f"Decrypted to {decrypted_path}")
 
         # Read into dataframe
@@ -206,17 +227,20 @@ def customer_application_pipeline():
     @task
     def encrypt_outbound(pipeline_run_id: str, audit_summary: dict) -> str:
         """
-        Build a summary report and encrypt it with the vendor's public key
-        for delivery back to the simulated vendor.
+        Build a summary report, encrypt with vendor public key, upload to
+        S3 outbound bucket as the delivery confirmation.
         """
         vendor_key = os.getenv("GPG_VENDOR_KEY_ID")
+        outbound_bucket = os.getenv("S3_OUTBOUND_BUCKET")
+
         if not vendor_key:
-            logger.warning("GPG_VENDOR_KEY_ID not set; skipping outbound encryption")
+            logger.warning("GPG_VENDOR_KEY_ID not set; skipping outbound")
+            return ""
+        if not outbound_bucket:
+            logger.warning("S3_OUTBOUND_BUCKET not set; skipping outbound")
             return ""
 
-        Path(OUTBOUND_DIR).mkdir(parents=True, exist_ok=True)
-
-        # Build a plaintext summary report
+        # Build plaintext summary
         plaintext_path = _temp_path(pipeline_run_id, "outbound_summary", ext="txt")
         with open(plaintext_path, "w") as f:
             f.write("Northstar Pipeline — Daily Delivery Confirmation\n")
@@ -227,16 +251,20 @@ def customer_application_pipeline():
             f.write(f"New Identities:   {audit_summary.get('new_identities', 0):,}\n")
             f.write(f"Generated:        {datetime.utcnow().isoformat()}Z\n")
 
-        # Encrypt with vendor's public key
-        encrypted_path = (
-            Path(OUTBOUND_DIR) / f"delivery_{pipeline_run_id}.txt.pgp"
-        )
-        ok = encrypt_file(plaintext_path, str(encrypted_path), vendor_key)
+        # Encrypt with vendor public key
+        encrypted_local = _temp_path(pipeline_run_id, "outbound_summary", ext="pgp")
+        ok = encrypt_file(plaintext_path, encrypted_local, vendor_key)
         if not ok:
             raise RuntimeError("Failed to encrypt outbound delivery file")
 
-        logger.info(f"Outbound encrypted delivery: {encrypted_path}")
-        return str(encrypted_path)
+        # Upload to outbound S3 bucket
+        s3_key = f"delivery_{pipeline_run_id}.txt.pgp"
+        ok = s3_upload(encrypted_local, outbound_bucket, s3_key)
+        if not ok:
+            raise RuntimeError(f"Failed to upload to s3://{outbound_bucket}/{s3_key}")
+
+        logger.info(f"Outbound delivery uploaded: s3://{outbound_bucket}/{s3_key}")
+        return f"s3://{outbound_bucket}/{s3_key}"
 
     @task
     def send_completion_alert(pipeline_run_id: str, audit_summary: dict) -> None:

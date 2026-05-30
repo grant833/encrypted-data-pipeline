@@ -1,9 +1,10 @@
 """
-Simulate a vendor encrypting and delivering a file.
+Simulate a vendor encrypting and delivering a file to the inbound S3 bucket.
 
-Currently writes to a local inbound/ directory. When AWS S3 is set up in
-Phase 2, this will be updated to upload the encrypted file to the inbound
-S3 bucket instead.
+This script:
+  1. Encrypts the plaintext input file with the inbound public key (GPG)
+  2. Uploads the encrypted .pgp file to the S3 inbound bucket
+  3. Cleans up the local temp encrypted file
 
 Usage:
     python data_gen/upload_to_s3.py --file ./data/customer_applications_20260523.txt
@@ -12,6 +13,7 @@ Usage:
 import argparse
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -19,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from dotenv import load_dotenv
 
 from pipeline.encryption import encrypt_file
+from pipeline.s3_utils import upload_file
 
 load_dotenv()
 
@@ -26,11 +29,6 @@ load_dotenv()
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="Path to plaintext file")
-    parser.add_argument(
-        "--inbound-dir",
-        default="/home/grant/pipeline-project/data/inbound",
-        help="Destination directory for encrypted files",
-    )
     args = parser.parse_args()
 
     input_path = Path(args.file)
@@ -39,28 +37,42 @@ def main():
         sys.exit(1)
 
     inbound_key = os.getenv("GPG_INBOUND_KEY_ID")
+    inbound_bucket = os.getenv("S3_INBOUND_BUCKET")
     if not inbound_key:
         print("GPG_INBOUND_KEY_ID not set in environment")
         sys.exit(1)
+    if not inbound_bucket:
+        print("S3_INBOUND_BUCKET not set in environment")
+        sys.exit(1)
 
-    # Make sure inbound dir exists
-    inbound_dir = Path(args.inbound_dir)
-    inbound_dir.mkdir(parents=True, exist_ok=True)
-
-    # Encrypt to a .pgp file in the inbound directory
-    output_path = inbound_dir / (input_path.name + ".pgp")
+    # Encrypt to a temp .pgp file
+    with tempfile.NamedTemporaryFile(
+        suffix=".pgp", delete=False, dir="/tmp",
+    ) as tmp:
+        encrypted_tmp = tmp.name
 
     print(f"Encrypting {input_path.name} with key {inbound_key}...")
-    ok = encrypt_file(str(input_path), str(output_path), inbound_key)
+    ok = encrypt_file(str(input_path), encrypted_tmp, inbound_key)
     if not ok:
         print("Encryption failed")
         sys.exit(1)
 
-    encrypted_size = output_path.stat().st_size
-    print(f"Encrypted file written: {output_path}")
-    print(f"  Size: {encrypted_size:,} bytes")
-    print(f"  First 20 bytes (hex): {output_path.read_bytes()[:20].hex()}")
-    print(f"\nReady for pipeline ingestion.")
+    encrypted_size = os.path.getsize(encrypted_tmp)
+    print(f"  Encrypted size: {encrypted_size:,} bytes")
+
+    # Upload to S3
+    s3_key = input_path.name + ".pgp"
+    print(f"Uploading to s3://{inbound_bucket}/{s3_key}...")
+    ok = upload_file(encrypted_tmp, inbound_bucket, s3_key)
+    if not ok:
+        print("Upload failed")
+        os.unlink(encrypted_tmp)
+        sys.exit(1)
+
+    # Cleanup temp file
+    os.unlink(encrypted_tmp)
+    print(f"\n✓ Encrypted file delivered to s3://{inbound_bucket}/{s3_key}")
+    print(f"  Ready for pipeline ingestion.")
 
 
 if __name__ == "__main__":
