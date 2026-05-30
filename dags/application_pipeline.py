@@ -3,11 +3,10 @@ Customer Application Pipeline DAG.
 
 Orchestrates the full customer application file processing chain:
     ingest_file -> reject_rules -> suppression -> identity_resolution
-    -> load_warehouse -> run_audit_queries
+    -> load_warehouse -> run_audit -> send_alert
 
 Each task writes its output dataframe to a temp file in /tmp/pipeline_runs/{run_id}/
-and passes the file path to the next task via XCom. This avoids serializing
-large dataframes through Airflow's metadata database.
+and passes the file path to the next task via XCom.
 """
 
 import logging
@@ -29,10 +28,10 @@ from pipeline.suppression_engine import SuppressionEngine
 from pipeline.identity_resolution import IdentityResolver
 from pipeline.loader import load_to_postgres
 from pipeline.audit import run_audit_queries, write_audit_log
+from pipeline.alerting import send_success_alert, airflow_failure_callback
 
 logger = logging.getLogger(__name__)
 
-# === Configuration ===
 POSTGRES_CONN_STRING = (
     "postgresql+psycopg2://pipeline_user:Tesla2345!@localhost/pipeline_db"
 )
@@ -45,17 +44,16 @@ default_args = {
     "owner": "grant",
     "retries": 1,
     "retry_delay": timedelta(minutes=2),
-    "email_on_failure": False,  # Will wire Slack alerts in Phase 13
+    "email_on_failure": False,
+    "on_failure_callback": airflow_failure_callback,
 }
 
 
 def _get_engine():
-    """Helper to create a fresh DB engine inside a task."""
     return create_engine(POSTGRES_CONN_STRING)
 
 
 def _temp_path(pipeline_run_id: str, stage: str) -> str:
-    """Build the temp file path for a given pipeline run + stage."""
     run_dir = Path(TEMP_DIR) / pipeline_run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     return str(run_dir / f"{stage}.parquet")
@@ -64,7 +62,7 @@ def _temp_path(pipeline_run_id: str, stage: str) -> str:
 @dag(
     dag_id="customer_application_pipeline",
     description="End-to-end customer application data pipeline",
-    schedule="0 3 * * *",  # Daily at 3am — same cadence you'd see in production
+    schedule="0 3 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,
@@ -75,18 +73,13 @@ def customer_application_pipeline():
 
     @task
     def initialize_run() -> str:
-        """Generate a unique run ID for this pipeline execution."""
         run_id = f"RUN-{uuid.uuid4().hex[:12].upper()}"
         logger.info(f"Pipeline run ID: {run_id}")
         return run_id
 
     @task
     def ingest_file(pipeline_run_id: str) -> str:
-        """Find today's input file and load it into a dataframe."""
         engine = _get_engine()
-
-        # In production this would poll an S3 inbound bucket.
-        # For now, grab the most recent file from the data dir.
         data_files = sorted(Path(DATA_DIR).glob("customer_applications_*.txt"))
         if not data_files:
             raise FileNotFoundError(f"No input files found in {DATA_DIR}")
@@ -96,9 +89,7 @@ def customer_application_pipeline():
         df = pd.read_csv(input_file, sep="|", dtype=str)
         logger.info(f"Loaded {len(df):,} records")
 
-        write_audit_log(
-            pipeline_run_id, FEED_NAME, "ingest", len(df), engine,
-        )
+        write_audit_log(pipeline_run_id, FEED_NAME, "ingest", len(df), engine)
 
         output_path = _temp_path(pipeline_run_id, "ingest")
         df.to_parquet(output_path, index=False)
@@ -106,13 +97,12 @@ def customer_application_pipeline():
 
     @task
     def apply_reject_rules(input_path: str, pipeline_run_id: str) -> str:
-        """Run the validation engine and split clean from rejected records."""
         engine = _get_engine()
         t0 = time.time()
 
         df = pd.read_parquet(input_path)
         reject_engine = PreProcessRejectEngine(
-            CUSTOMER_APPLICATION_RULES, reject_threshold=0.10,
+            CUSTOMER_APPLICATION_RULES, reject_threshold=0.10
         )
         passed, rejected = reject_engine.apply_rules(df)
 
@@ -129,7 +119,6 @@ def customer_application_pipeline():
 
     @task
     def apply_suppression(input_path: str, pipeline_run_id: str) -> str:
-        """Filter records against privacy and fraud suppression lists."""
         engine = _get_engine()
         t0 = time.time()
 
@@ -150,7 +139,6 @@ def customer_application_pipeline():
 
     @task
     def resolve_identities(input_path: str, pipeline_run_id: str) -> str:
-        """Match records to existing identities or create new ones."""
         engine = _get_engine()
         t0 = time.time()
 
@@ -158,7 +146,6 @@ def customer_application_pipeline():
         resolver = IdentityResolver(engine)
         resolved = resolver.resolve_identities(df)
 
-        # identity_id comes back as int64; parquet handles that fine
         write_audit_log(
             pipeline_run_id, FEED_NAME, "identity_resolution",
             len(resolved), engine,
@@ -171,7 +158,6 @@ def customer_application_pipeline():
 
     @task
     def load_to_warehouse(input_path: str, pipeline_run_id: str) -> int:
-        """Bulk-load resolved records into the customer_applications table."""
         engine = _get_engine()
         t0 = time.time()
 
@@ -187,7 +173,6 @@ def customer_application_pipeline():
 
     @task
     def run_post_load_audit(pipeline_run_id: str, loaded_count: int) -> dict:
-        """Run audit queries and log a summary."""
         engine = _get_engine()
         results = run_audit_queries(pipeline_run_id, engine)
 
@@ -205,14 +190,45 @@ def customer_application_pipeline():
         logger.info(f"Audit summary: {summary}")
         return summary
 
-    # === Define the pipeline dependency chain ===
+    @task
+    def send_completion_alert(pipeline_run_id: str, audit_summary: dict) -> None:
+        """Send a Slack success message at the end of the pipeline."""
+        engine = _get_engine()
+
+        # Pull the timing and counts from the audit log
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT
+                    SUM(runtime_seconds) AS total_runtime,
+                    SUM(rejected_count) AS total_rejected,
+                    SUM(suppressed_count) AS total_suppressed
+                FROM pipeline_audit_log
+                WHERE pipeline_run_id = :run_id
+            """), {"run_id": pipeline_run_id}).fetchone()
+
+        total_runtime = float(result[0] or 0)
+        total_rejected = int(result[1] or 0)
+        total_suppressed = int(result[2] or 0)
+
+        send_success_alert(
+            feed_name=FEED_NAME,
+            pipeline_run_id=pipeline_run_id,
+            record_count=audit_summary.get("total_loaded", 0),
+            rejected_count=total_rejected,
+            suppressed_count=total_suppressed,
+            runtime_seconds=total_runtime,
+        )
+
+    # === Pipeline dependency chain ===
     run_id = initialize_run()
     ingested = ingest_file(run_id)
     validated = apply_reject_rules(ingested, run_id)
     suppressed = apply_suppression(validated, run_id)
     resolved = resolve_identities(suppressed, run_id)
     loaded = load_to_warehouse(resolved, run_id)
-    run_post_load_audit(run_id, loaded)
+    audit_result = run_post_load_audit(run_id, loaded)
+    send_completion_alert(run_id, audit_result)
 
 
 dag = customer_application_pipeline()
