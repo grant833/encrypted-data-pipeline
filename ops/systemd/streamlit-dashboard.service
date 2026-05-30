@@ -1,0 +1,20 @@
+[Unit]
+Description=Streamlit Pipeline Monitoring Dashboard
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=grant
+Group=grant
+WorkingDirectory=/home/grant/pipeline-project
+Environment="PATH=/home/grant/pipeline-project/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="PYTHONPATH=/home/grant/pipeline-project"
+ExecStart=/home/grant/pipeline-project/venv/bin/streamlit run /home/grant/pipeline-project/dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/grant/pipeline-project/airflow/streamlit-systemd.log
+StandardError=append:/home/grant/pipeline-project/airflow/streamlit-systemd.log
+
+[Install]
+WantedBy=multi-user.target
