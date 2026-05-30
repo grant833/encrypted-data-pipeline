@@ -1,96 +1,218 @@
 """
-Application Feed Pipeline DAG.
+Customer Application Pipeline DAG.
 
-Orchestrates the full application file processing chain:
-  watch_s3 -> decrypt -> reject_rules -> suppressions -> identity_resolution
-  -> load_warehouse -> audit -> encrypt_output -> alert
+Orchestrates the full customer application file processing chain:
+    ingest_file -> reject_rules -> suppression -> identity_resolution
+    -> load_warehouse -> run_audit_queries
 
-Schedule: daily at 3am, mirroring production cadence.
+Each task writes its output dataframe to a temp file in /tmp/pipeline_runs/{run_id}/
+and passes the file path to the next task via XCom. This avoids serializing
+large dataframes through Airflow's metadata database.
 """
 
+import logging
+import time
+import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+import pandas as pd
+from sqlalchemy import create_engine
 
-# from pipeline.alerting import airflow_failure_callback
-# from pipeline import encryption, reject_rules, suppression_engine
-# from pipeline import identity_resolution, loader, audit, s3_utils
+from airflow.decorators import dag, task
+
+from pipeline.reject_rules import (
+    PreProcessRejectEngine,
+    CUSTOMER_APPLICATION_RULES,
+)
+from pipeline.suppression_engine import SuppressionEngine
+from pipeline.identity_resolution import IdentityResolver
+from pipeline.loader import load_to_postgres
+from pipeline.audit import run_audit_queries, write_audit_log
+
+logger = logging.getLogger(__name__)
+
+# === Configuration ===
+POSTGRES_CONN_STRING = (
+    "postgresql+psycopg2://pipeline_user:Tesla2345!@localhost/pipeline_db"
+)
+DATA_DIR = "/home/grant/pipeline-project/data"
+TEMP_DIR = "/tmp/pipeline_runs"
+FEED_NAME = "customer_applications"
 
 
 default_args = {
     "owner": "grant",
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
-    "email_on_failure": False,  # Using Slack instead
-    # "on_failure_callback": airflow_failure_callback,
+    "retries": 1,
+    "retry_delay": timedelta(minutes=2),
+    "email_on_failure": False,  # Will wire Slack alerts in Phase 13
 }
 
 
-with DAG(
-    "application_feed_pipeline",
-    default_args=default_args,
-    description="End-to-end application file processing pipeline",
-    schedule_interval="0 3 * * *",
+def _get_engine():
+    """Helper to create a fresh DB engine inside a task."""
+    return create_engine(POSTGRES_CONN_STRING)
+
+
+def _temp_path(pipeline_run_id: str, stage: str) -> str:
+    """Build the temp file path for a given pipeline run + stage."""
+    run_dir = Path(TEMP_DIR) / pipeline_run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return str(run_dir / f"{stage}.parquet")
+
+
+@dag(
+    dag_id="customer_application_pipeline",
+    description="End-to-end customer application data pipeline",
+    schedule="0 3 * * *",  # Daily at 3am — same cadence you'd see in production
     start_date=datetime(2026, 1, 1),
     catchup=False,
-    tags=["application", "inbound", "encrypted"],
-) as dag:
+    default_args=default_args,
+    tags=["customer_applications", "inbound", "northstar_financial"],
+)
+def customer_application_pipeline():
+    """The full pipeline DAG."""
 
-    watch_s3 = PythonOperator(
-        task_id="watch_s3_for_file",
-        python_callable=lambda: None,  # TODO: implement
-    )
+    @task
+    def initialize_run() -> str:
+        """Generate a unique run ID for this pipeline execution."""
+        run_id = f"RUN-{uuid.uuid4().hex[:12].upper()}"
+        logger.info(f"Pipeline run ID: {run_id}")
+        return run_id
 
-    decrypt_file = PythonOperator(
-        task_id="decrypt_gpg_file",
-        python_callable=lambda: None,  # TODO: implement
-    )
+    @task
+    def ingest_file(pipeline_run_id: str) -> str:
+        """Find today's input file and load it into a dataframe."""
+        engine = _get_engine()
 
-    pre_process = PythonOperator(
-        task_id="run_pre_process_reject_rules",
-        python_callable=lambda: None,  # TODO: implement
-    )
+        # In production this would poll an S3 inbound bucket.
+        # For now, grab the most recent file from the data dir.
+        data_files = sorted(Path(DATA_DIR).glob("customer_applications_*.txt"))
+        if not data_files:
+            raise FileNotFoundError(f"No input files found in {DATA_DIR}")
+        input_file = str(data_files[-1])
+        logger.info(f"Ingesting {input_file}")
 
-    apply_suppressions = PythonOperator(
-        task_id="apply_suppression_engine",
-        python_callable=lambda: None,  # TODO: implement
-    )
+        df = pd.read_csv(input_file, sep="|", dtype=str)
+        logger.info(f"Loaded {len(df):,} records")
 
-    resolve_identities = PythonOperator(
-        task_id="resolve_identities",
-        python_callable=lambda: None,  # TODO: implement
-    )
+        write_audit_log(
+            pipeline_run_id, FEED_NAME, "ingest", len(df), engine,
+        )
 
-    load_warehouse = PythonOperator(
-        task_id="load_to_warehouse",
-        python_callable=lambda: None,  # TODO: implement
-    )
+        output_path = _temp_path(pipeline_run_id, "ingest")
+        df.to_parquet(output_path, index=False)
+        return output_path
 
-    audit_counts = PythonOperator(
-        task_id="run_audit_sql",
-        python_callable=lambda: None,  # TODO: implement
-    )
+    @task
+    def apply_reject_rules(input_path: str, pipeline_run_id: str) -> str:
+        """Run the validation engine and split clean from rejected records."""
+        engine = _get_engine()
+        t0 = time.time()
 
-    encrypt_output = PythonOperator(
-        task_id="encrypt_and_deliver_output",
-        python_callable=lambda: None,  # TODO: implement
-    )
+        df = pd.read_parquet(input_path)
+        reject_engine = PreProcessRejectEngine(
+            CUSTOMER_APPLICATION_RULES, reject_threshold=0.10,
+        )
+        passed, rejected = reject_engine.apply_rules(df)
 
-    send_alert = PythonOperator(
-        task_id="send_completion_alert",
-        python_callable=lambda: None,  # TODO: implement
-    )
+        write_audit_log(
+            pipeline_run_id, FEED_NAME, "reject_rules",
+            len(passed), engine,
+            rejected_count=len(rejected),
+            runtime_seconds=time.time() - t0,
+        )
 
-    # Pipeline dependency chain
-    (
-        watch_s3
-        >> decrypt_file
-        >> pre_process
-        >> apply_suppressions
-        >> resolve_identities
-        >> load_warehouse
-        >> audit_counts
-        >> encrypt_output
-        >> send_alert
-    )
+        output_path = _temp_path(pipeline_run_id, "reject_rules")
+        passed.to_parquet(output_path, index=False)
+        return output_path
+
+    @task
+    def apply_suppression(input_path: str, pipeline_run_id: str) -> str:
+        """Filter records against privacy and fraud suppression lists."""
+        engine = _get_engine()
+        t0 = time.time()
+
+        df = pd.read_parquet(input_path)
+        suppression_engine = SuppressionEngine(engine)
+        included, excluded = suppression_engine.apply_suppressions(df)
+
+        write_audit_log(
+            pipeline_run_id, FEED_NAME, "suppression",
+            len(included), engine,
+            suppressed_count=len(excluded),
+            runtime_seconds=time.time() - t0,
+        )
+
+        output_path = _temp_path(pipeline_run_id, "suppression")
+        included.to_parquet(output_path, index=False)
+        return output_path
+
+    @task
+    def resolve_identities(input_path: str, pipeline_run_id: str) -> str:
+        """Match records to existing identities or create new ones."""
+        engine = _get_engine()
+        t0 = time.time()
+
+        df = pd.read_parquet(input_path)
+        resolver = IdentityResolver(engine)
+        resolved = resolver.resolve_identities(df)
+
+        # identity_id comes back as int64; parquet handles that fine
+        write_audit_log(
+            pipeline_run_id, FEED_NAME, "identity_resolution",
+            len(resolved), engine,
+            runtime_seconds=time.time() - t0,
+        )
+
+        output_path = _temp_path(pipeline_run_id, "identity_resolution")
+        resolved.to_parquet(output_path, index=False)
+        return output_path
+
+    @task
+    def load_to_warehouse(input_path: str, pipeline_run_id: str) -> int:
+        """Bulk-load resolved records into the customer_applications table."""
+        engine = _get_engine()
+        t0 = time.time()
+
+        df = pd.read_parquet(input_path)
+        loaded_count = load_to_postgres(df, pipeline_run_id, engine)
+
+        write_audit_log(
+            pipeline_run_id, FEED_NAME, "load",
+            loaded_count, engine,
+            runtime_seconds=time.time() - t0,
+        )
+        return loaded_count
+
+    @task
+    def run_post_load_audit(pipeline_run_id: str, loaded_count: int) -> dict:
+        """Run audit queries and log a summary."""
+        engine = _get_engine()
+        results = run_audit_queries(pipeline_run_id, engine)
+
+        summary = {
+            "pipeline_run_id": pipeline_run_id,
+            "total_loaded": int(results["total_loaded"]["count"].iloc[0])
+                            if not results["total_loaded"].empty else 0,
+        }
+
+        if not results["identity_match_rate"].empty:
+            match_row = results["identity_match_rate"].iloc[0]
+            summary["match_rate_pct"] = float(match_row["match_rate_pct"] or 0)
+            summary["new_identities"] = int(match_row["new_identities"] or 0)
+
+        logger.info(f"Audit summary: {summary}")
+        return summary
+
+    # === Define the pipeline dependency chain ===
+    run_id = initialize_run()
+    ingested = ingest_file(run_id)
+    validated = apply_reject_rules(ingested, run_id)
+    suppressed = apply_suppression(validated, run_id)
+    resolved = resolve_identities(suppressed, run_id)
+    loaded = load_to_warehouse(resolved, run_id)
+    run_post_load_audit(run_id, loaded)
+
+
+dag = customer_application_pipeline()
