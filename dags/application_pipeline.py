@@ -1,15 +1,16 @@
 """
 Customer Application Pipeline DAG.
 
-Orchestrates the full customer application file processing chain:
-    ingest_file -> reject_rules -> suppression -> identity_resolution
-    -> load_warehouse -> run_audit -> send_alert
-
-Each task writes its output dataframe to a temp file in /tmp/pipeline_runs/{run_id}/
-and passes the file path to the next task via XCom.
+Encrypted end-to-end:
+    Vendor encrypts file with inbound public key, drops to inbound/
+    -> ingest_file decrypts with inbound private key
+    -> reject_rules -> suppression -> identity_resolution -> load -> audit
+    -> encrypt_outbound (encrypts summary with vendor public key)
+    -> send_alert
 """
 
 import logging
+import os
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -29,13 +30,15 @@ from pipeline.identity_resolution import IdentityResolver
 from pipeline.loader import load_to_postgres
 from pipeline.audit import run_audit_queries, write_audit_log
 from pipeline.alerting import send_success_alert, airflow_failure_callback
+from pipeline.encryption import decrypt_file, encrypt_file
 
 logger = logging.getLogger(__name__)
 
 POSTGRES_CONN_STRING = (
     "postgresql+psycopg2://pipeline_user:Tesla2345!@localhost/pipeline_db"
 )
-DATA_DIR = "/home/grant/pipeline-project/data"
+INBOUND_DIR = "/home/grant/pipeline-project/data/inbound"
+OUTBOUND_DIR = "/home/grant/pipeline-project/data/outbound"
 TEMP_DIR = "/tmp/pipeline_runs"
 FEED_NAME = "customer_applications"
 
@@ -53,23 +56,22 @@ def _get_engine():
     return create_engine(POSTGRES_CONN_STRING)
 
 
-def _temp_path(pipeline_run_id: str, stage: str) -> str:
+def _temp_path(pipeline_run_id: str, stage: str, ext: str = "parquet") -> str:
     run_dir = Path(TEMP_DIR) / pipeline_run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    return str(run_dir / f"{stage}.parquet")
+    return str(run_dir / f"{stage}.{ext}")
 
 
 @dag(
     dag_id="customer_application_pipeline",
-    description="End-to-end customer application data pipeline",
+    description="End-to-end encrypted customer application data pipeline",
     schedule="0 3 * * *",
     start_date=datetime(2026, 1, 1),
     catchup=False,
     default_args=default_args,
-    tags=["customer_applications", "inbound", "northstar_financial"],
+    tags=["customer_applications", "encrypted", "northstar_financial"],
 )
 def customer_application_pipeline():
-    """The full pipeline DAG."""
 
     @task
     def initialize_run() -> str:
@@ -79,14 +81,25 @@ def customer_application_pipeline():
 
     @task
     def ingest_file(pipeline_run_id: str) -> str:
+        """Find latest encrypted .pgp file, decrypt it, return plaintext path."""
         engine = _get_engine()
-        data_files = sorted(Path(DATA_DIR).glob("customer_applications_*.txt"))
-        if not data_files:
-            raise FileNotFoundError(f"No input files found in {DATA_DIR}")
-        input_file = str(data_files[-1])
-        logger.info(f"Ingesting {input_file}")
 
-        df = pd.read_csv(input_file, sep="|", dtype=str)
+        # Find newest .pgp file in inbound/
+        encrypted_files = sorted(Path(INBOUND_DIR).glob("*.pgp"))
+        if not encrypted_files:
+            raise FileNotFoundError(f"No .pgp files found in {INBOUND_DIR}")
+        encrypted_input = encrypted_files[-1]
+        logger.info(f"Ingesting encrypted file: {encrypted_input.name}")
+
+        # Decrypt to a temp location
+        decrypted_path = _temp_path(pipeline_run_id, "decrypted_input", ext="txt")
+        ok = decrypt_file(str(encrypted_input), decrypted_path)
+        if not ok:
+            raise RuntimeError(f"Failed to decrypt {encrypted_input}")
+        logger.info(f"Decrypted to {decrypted_path}")
+
+        # Read into dataframe
+        df = pd.read_csv(decrypted_path, sep="|", dtype=str)
         logger.info(f"Loaded {len(df):,} records")
 
         write_audit_log(pipeline_run_id, FEED_NAME, "ingest", len(df), engine)
@@ -191,11 +204,44 @@ def customer_application_pipeline():
         return summary
 
     @task
+    def encrypt_outbound(pipeline_run_id: str, audit_summary: dict) -> str:
+        """
+        Build a summary report and encrypt it with the vendor's public key
+        for delivery back to the simulated vendor.
+        """
+        vendor_key = os.getenv("GPG_VENDOR_KEY_ID")
+        if not vendor_key:
+            logger.warning("GPG_VENDOR_KEY_ID not set; skipping outbound encryption")
+            return ""
+
+        Path(OUTBOUND_DIR).mkdir(parents=True, exist_ok=True)
+
+        # Build a plaintext summary report
+        plaintext_path = _temp_path(pipeline_run_id, "outbound_summary", ext="txt")
+        with open(plaintext_path, "w") as f:
+            f.write("Northstar Pipeline — Daily Delivery Confirmation\n")
+            f.write("=" * 50 + "\n")
+            f.write(f"Run ID:           {pipeline_run_id}\n")
+            f.write(f"Records Loaded:   {audit_summary.get('total_loaded', 0):,}\n")
+            f.write(f"Match Rate:       {audit_summary.get('match_rate_pct', 0):.2f}%\n")
+            f.write(f"New Identities:   {audit_summary.get('new_identities', 0):,}\n")
+            f.write(f"Generated:        {datetime.utcnow().isoformat()}Z\n")
+
+        # Encrypt with vendor's public key
+        encrypted_path = (
+            Path(OUTBOUND_DIR) / f"delivery_{pipeline_run_id}.txt.pgp"
+        )
+        ok = encrypt_file(plaintext_path, str(encrypted_path), vendor_key)
+        if not ok:
+            raise RuntimeError("Failed to encrypt outbound delivery file")
+
+        logger.info(f"Outbound encrypted delivery: {encrypted_path}")
+        return str(encrypted_path)
+
+    @task
     def send_completion_alert(pipeline_run_id: str, audit_summary: dict) -> None:
-        """Send a Slack success message at the end of the pipeline."""
         engine = _get_engine()
 
-        # Pull the timing and counts from the audit log
         from sqlalchemy import text
         with engine.connect() as conn:
             result = conn.execute(text("""
@@ -228,7 +274,8 @@ def customer_application_pipeline():
     resolved = resolve_identities(suppressed, run_id)
     loaded = load_to_warehouse(resolved, run_id)
     audit_result = run_post_load_audit(run_id, loaded)
-    send_completion_alert(run_id, audit_result)
+    outbound = encrypt_outbound(run_id, audit_result)
+    audit_result >> outbound >> send_completion_alert(run_id, audit_result)
 
 
 dag = customer_application_pipeline()

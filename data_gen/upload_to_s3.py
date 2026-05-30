@@ -1,12 +1,12 @@
 """
-Encrypt synthetic data files and upload to S3 inbound bucket.
+Simulate a vendor encrypting and delivering a file.
 
-This script simulates a vendor sending an encrypted file to your S3 bucket.
-It encrypts a local plaintext file with the vendor public key, uploads the
-.pgp file to S3, and the pipeline picks it up from there.
+Currently writes to a local inbound/ directory. When AWS S3 is set up in
+Phase 2, this will be updated to upload the encrypted file to the inbound
+S3 bucket instead.
 
 Usage:
-    python data_gen/upload_to_s3.py --file ./data/BF_Applications_20260519.txt
+    python data_gen/upload_to_s3.py --file ./data/customer_applications_20260523.txt
 """
 
 import argparse
@@ -14,18 +14,23 @@ import os
 import sys
 from pathlib import Path
 
-# Add parent to path so we can import the pipeline module
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# from pipeline.encryption import encrypt_file
-# from pipeline.s3_utils import upload_file
-# from pipeline.config import aws_config, gpg_config
+from dotenv import load_dotenv
+
+from pipeline.encryption import encrypt_file
+
+load_dotenv()
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="Path to plaintext file")
-    parser.add_argument("--bucket", default=None, help="Override target bucket")
+    parser.add_argument(
+        "--inbound-dir",
+        default="/home/grant/pipeline-project/data/inbound",
+        help="Destination directory for encrypted files",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.file)
@@ -33,11 +38,29 @@ def main():
         print(f"File not found: {input_path}")
         sys.exit(1)
 
-    # TODO: Encrypt the file with the inbound GPG public key
-    # TODO: Upload encrypted .pgp file to S3 inbound bucket
-    # TODO: Print confirmation with S3 key path
+    inbound_key = os.getenv("GPG_INBOUND_KEY_ID")
+    if not inbound_key:
+        print("GPG_INBOUND_KEY_ID not set in environment")
+        sys.exit(1)
 
-    print(f"Encrypted and uploaded {input_path.name}")
+    # Make sure inbound dir exists
+    inbound_dir = Path(args.inbound_dir)
+    inbound_dir.mkdir(parents=True, exist_ok=True)
+
+    # Encrypt to a .pgp file in the inbound directory
+    output_path = inbound_dir / (input_path.name + ".pgp")
+
+    print(f"Encrypting {input_path.name} with key {inbound_key}...")
+    ok = encrypt_file(str(input_path), str(output_path), inbound_key)
+    if not ok:
+        print("Encryption failed")
+        sys.exit(1)
+
+    encrypted_size = output_path.stat().st_size
+    print(f"Encrypted file written: {output_path}")
+    print(f"  Size: {encrypted_size:,} bytes")
+    print(f"  First 20 bytes (hex): {output_path.read_bytes()[:20].hex()}")
+    print(f"\nReady for pipeline ingestion.")
 
 
 if __name__ == "__main__":
