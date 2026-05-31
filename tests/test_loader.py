@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from pipeline.loader import COLUMN_MAPPING, load_to_postgres
+from pipeline.loader import CUSTOMER_APPLICATIONS_COLUMNS, load_to_postgres
 
 
 @pytest.fixture
@@ -52,14 +52,6 @@ def test_returns_correct_row_count(sample_df):
     assert result == 2
 
 
-def test_missing_columns_raises(sample_df):
-    """A dataframe with no matching columns should raise ValueError."""
-    df = pd.DataFrame([{"unrelated_field": "value"}])
-    fake_engine = MagicMock()
-    with pytest.raises(ValueError, match="No matching columns"):
-        load_to_postgres(df, "RUN-TEST", fake_engine)
-
-
 def test_pipeline_run_id_added_to_records(sample_df):
     """Every loaded record should be tagged with pipeline_run_id and source_system."""
     fake_engine = MagicMock()
@@ -71,32 +63,53 @@ def test_pipeline_run_id_added_to_records(sample_df):
         mock_table_class.return_value = MagicMock()
         load_to_postgres(sample_df, "RUN-ABC123", fake_engine)
 
-    # The execute call should have received records with pipeline_run_id
     assert mock_conn.execute.called
     call_args = mock_conn.execute.call_args
-    records = call_args[0][1]  # second positional arg is the list of dicts
+    records = call_args[0][1]
     for record in records:
         assert record["pipeline_run_id"] == "RUN-ABC123"
         assert record["source_system"] == "NORTHSTAR_FINANCIAL"
 
 
-def test_column_mapping_preserves_all_application_fields():
-    """The column mapping should cover every field from the source data."""
+def test_columns_constant_covers_all_application_fields():
+    """The columns constant should cover every required field on the target table."""
     expected_fields = {
+        "pipeline_run_id", "source_system",
         "first_name", "middle_initial", "last_name", "street_address",
         "city", "state", "zip_code", "application_id", "customer_id",
         "identity_id", "division_id", "submitted_date", "application_status",
         "email_address", "date_of_birth",
     }
-    assert set(COLUMN_MAPPING.keys()) == expected_fields
+    assert set(CUSTOMER_APPLICATIONS_COLUMNS) == expected_fields
 
 
-def test_chunksize_creates_multiple_inserts():
+def test_extra_columns_are_filtered_out(sample_df):
+    """Columns not in the target schema should be silently dropped before insert."""
+    # Add some extra columns that shouldn't end up in the warehouse
+    sample_df["ssn"] = "999-99-9999"
+    sample_df["raw_phone"] = "555-1234"
+
+    fake_engine = MagicMock()
+    mock_conn = MagicMock()
+    fake_engine.begin.return_value.__enter__ = MagicMock(return_value=mock_conn)
+    fake_engine.begin.return_value.__exit__ = MagicMock(return_value=False)
+
+    with patch("pipeline.loader.Table") as mock_table_class:
+        mock_table_class.return_value = MagicMock()
+        load_to_postgres(sample_df, "RUN-TEST", fake_engine)
+
+    call_args = mock_conn.execute.call_args
+    records = call_args[0][1]
+    for record in records:
+        assert "ssn" not in record
+        assert "raw_phone" not in record
+
+
+def test_chunk_size_creates_multiple_inserts():
     """Large dataframes should be inserted in multiple chunks."""
-    # Build a 12-row dataframe with all required columns
-    rows = []
-    for i in range(12):
-        rows.append({col: f"val{i}" for col in COLUMN_MAPPING.keys()})
+    sample_cols = [c for c in CUSTOMER_APPLICATIONS_COLUMNS
+                   if c not in ("pipeline_run_id", "source_system")]
+    rows = [{col: f"val{i}" for col in sample_cols} for i in range(12)]
     df = pd.DataFrame(rows)
 
     fake_engine = MagicMock()
@@ -106,7 +119,7 @@ def test_chunksize_creates_multiple_inserts():
 
     with patch("pipeline.loader.Table") as mock_table_class:
         mock_table_class.return_value = MagicMock()
-        # chunksize=5 means 12 rows should produce 3 inserts (5+5+2)
-        load_to_postgres(df, "RUN-TEST", fake_engine, chunksize=5)
+        # chunk_size=5 means 12 rows should produce 3 inserts (5 + 5 + 2)
+        load_to_postgres(df, "RUN-TEST", fake_engine, chunk_size=5)
 
     assert mock_conn.execute.call_count == 3

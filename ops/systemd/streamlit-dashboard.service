@@ -10,6 +10,7 @@ Group=grant
 WorkingDirectory=/home/grant/pipeline-project
 Environment="PATH=/home/grant/pipeline-project/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONPATH=/home/grant/pipeline-project"
+EnvironmentFile=-/home/grant/pipeline-project/.env
 ExecStart=/home/grant/pipeline-project/venv/bin/streamlit run /home/grant/pipeline-project/dashboard/app.py --server.address 0.0.0.0 --server.port 8501 --server.headless true --browser.gatherUsageStats false
 Restart=always
 RestartSec=10

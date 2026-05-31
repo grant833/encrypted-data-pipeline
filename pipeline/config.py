@@ -1,8 +1,8 @@
 """
-Centralized configuration loading.
+Centralized configuration loaded from environment variables.
 
-Loads credentials and settings from environment variables (via .env file).
-Never hardcode secrets — always read from env.
+Reads from .env via python-dotenv. All sensitive values come from the
+environment — nothing is hardcoded in this module.
 """
 
 import os
@@ -13,41 +13,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-@dataclass(frozen=True)
-class AWSConfig:
-    access_key_id: str = os.getenv("AWS_ACCESS_KEY_ID", "")
-    secret_access_key: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
-    region: str = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
-    inbound_bucket: str = os.getenv("S3_INBOUND_BUCKET", "")
-    outbound_bucket: str = os.getenv("S3_OUTBOUND_BUCKET", "")
-    archive_bucket: str = os.getenv("S3_ARCHIVE_BUCKET", "")
-
-
-@dataclass(frozen=True)
-class SnowflakeConfig:
-    account: str = os.getenv("SNOWFLAKE_ACCOUNT", "")
-    user: str = os.getenv("SNOWFLAKE_USER", "")
-    password: str = os.getenv("SNOWFLAKE_PASSWORD", "")
-    warehouse: str = os.getenv("SNOWFLAKE_WAREHOUSE", "COMPUTE_WH")
-    database: str = os.getenv("SNOWFLAKE_DATABASE", "PIPELINE_PROJECT")
-    schema: str = os.getenv("SNOWFLAKE_SCHEMA", "PUBLIC")
-    role: str = os.getenv("SNOWFLAKE_ROLE", "ACCOUNTADMIN")
-
-    def connection_params(self) -> dict:
-        """Return dict suitable for snowflake.connector.connect()."""
-        return {
-            "account": self.account,
-            "user": self.user,
-            "password": self.password,
-            "warehouse": self.warehouse,
-            "database": self.database,
-            "schema": self.schema,
-            "role": self.role,
-        }
-
-
-@dataclass(frozen=True)
+@dataclass
 class PostgresConfig:
+    """PostgreSQL connection settings."""
     host: str = os.getenv("POSTGRES_HOST", "localhost")
     port: int = int(os.getenv("POSTGRES_PORT", "5432"))
     database: str = os.getenv("POSTGRES_DB", "pipeline_db")
@@ -62,22 +30,30 @@ class PostgresConfig:
         )
 
 
-@dataclass(frozen=True)
+@dataclass
+class S3Config:
+    """AWS S3 bucket settings."""
+    inbound_bucket: str = os.getenv("S3_INBOUND_BUCKET", "")
+    outbound_bucket: str = os.getenv("S3_OUTBOUND_BUCKET", "")
+    region: str = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+
+
+@dataclass
 class GPGConfig:
+    """GPG encryption settings."""
     inbound_key_id: str = os.getenv("GPG_INBOUND_KEY_ID", "")
     vendor_key_id: str = os.getenv("GPG_VENDOR_KEY_ID", "")
-    passphrase: str = os.getenv("GPG_PASSPHRASE", "")
 
 
-@dataclass(frozen=True)
+@dataclass
 class SlackConfig:
+    """Slack alerting settings."""
     bot_token: str = os.getenv("SLACK_BOT_TOKEN", "")
-    alert_channel: str = os.getenv("SLACK_ALERT_CHANNEL", "#pipeline-alerts")
+    alert_channel: str = os.getenv("SLACK_ALERT_CHANNEL", "")
 
 
-# Singleton instances
-aws_config = AWSConfig()
-snowflake_config = SnowflakeConfig()
+# Convenience singletons
 postgres_config = PostgresConfig()
+s3_config = S3Config()
 gpg_config = GPGConfig()
 slack_config = SlackConfig()

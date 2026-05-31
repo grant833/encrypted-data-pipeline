@@ -45,7 +45,9 @@ from pipeline.s3_utils import (
 logger = logging.getLogger(__name__)
 
 POSTGRES_CONN_STRING = (
-    "postgresql+psycopg2://pipeline_user:Tesla2345!@localhost/pipeline_db"
+    f"postgresql+psycopg2://pipeline_user:"
+    f"{os.environ.get('POSTGRES_PASSWORD', '')}"
+    f"@localhost/pipeline_db"
 )
 TEMP_DIR = "/tmp/pipeline_runs"
 FEED_NAME = "customer_applications"
@@ -99,7 +101,6 @@ def customer_application_pipeline():
         if not inbound_bucket:
             raise RuntimeError("S3_INBOUND_BUCKET env var not set")
 
-        # Find the most recent .pgp file in the inbound bucket
         latest = get_latest_object(inbound_bucket)
         if not latest:
             raise FileNotFoundError(
@@ -111,20 +112,17 @@ def customer_application_pipeline():
             f"({latest['Size']:,} bytes, {latest['LastModified']})"
         )
 
-        # Download the encrypted file to a temp location
         encrypted_path = _temp_path(pipeline_run_id, "encrypted_input", ext="pgp")
         ok = s3_download(inbound_bucket, latest["Key"], encrypted_path)
         if not ok:
             raise RuntimeError(f"Failed to download s3://{inbound_bucket}/{latest['Key']}")
 
-        # Decrypt
         decrypted_path = _temp_path(pipeline_run_id, "decrypted_input", ext="txt")
         ok = decrypt_file(encrypted_path, decrypted_path)
         if not ok:
             raise RuntimeError(f"Failed to decrypt {encrypted_path}")
         logger.info(f"Decrypted to {decrypted_path}")
 
-        # Read into dataframe
         df = pd.read_csv(decrypted_path, sep="|", dtype=str)
         logger.info(f"Loaded {len(df):,} records")
 
@@ -256,10 +254,9 @@ def customer_application_pipeline():
             logger.warning("S3_OUTBOUND_BUCKET not set; skipping outbound")
             return ""
 
-        # Build plaintext summary
         plaintext_path = _temp_path(pipeline_run_id, "outbound_summary", ext="txt")
         with open(plaintext_path, "w") as f:
-            f.write("Northstar Pipeline — Daily Delivery Confirmation\n")
+            f.write("Northstar Pipeline - Daily Delivery Confirmation\n")
             f.write("=" * 50 + "\n")
             f.write(f"Run ID:           {pipeline_run_id}\n")
             f.write(f"Records Loaded:   {audit_summary.get('total_loaded', 0):,}\n")
@@ -267,13 +264,11 @@ def customer_application_pipeline():
             f.write(f"New Identities:   {audit_summary.get('new_identities', 0):,}\n")
             f.write(f"Generated:        {datetime.utcnow().isoformat()}Z\n")
 
-        # Encrypt with vendor public key
         encrypted_local = _temp_path(pipeline_run_id, "outbound_summary", ext="pgp")
         ok = encrypt_file(plaintext_path, encrypted_local, vendor_key)
         if not ok:
             raise RuntimeError("Failed to encrypt outbound delivery file")
 
-        # Upload to outbound S3 bucket
         s3_key = f"delivery_{pipeline_run_id}.txt.pgp"
         ok = s3_upload(encrypted_local, outbound_bucket, s3_key)
         if not ok:

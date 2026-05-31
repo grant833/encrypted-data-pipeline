@@ -11,7 +11,7 @@ WorkingDirectory=/home/grant/pipeline-project
 Environment="PATH=/home/grant/pipeline-project/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="AIRFLOW_HOME=/home/grant/pipeline-project/airflow"
 Environment="AIRFLOW__CORE__EXECUTOR=LocalExecutor"
-Environment="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://pipeline_user:Tesla2345!@localhost/airflow_db"
+Environment="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://pipeline_user:YOUR_PASSWORD_HERE@localhost/airflow_db"
 Environment="AIRFLOW__CORE__LOAD_EXAMPLES=False"
 Environment="AIRFLOW__CORE__DAGS_FOLDER=/home/grant/pipeline-project/dags"
 Environment="PYTHONPATH=/home/grant/pipeline-project"

@@ -10,7 +10,7 @@ Access at http://[pi-ip]:8501 after running:
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pandas as pd
 import plotly.express as px
@@ -31,9 +31,9 @@ st.set_page_config(
 # ===== Database Connection =====
 @st.cache_resource
 def get_engine():
-    """Create SQLAlchemy engine from environment or defaults."""
+    """Create SQLAlchemy engine from environment."""
     user = os.getenv("POSTGRES_USER", "pipeline_user")
-    password = os.getenv("POSTGRES_PASSWORD", "Tesla2345!")
+    password = os.getenv("POSTGRES_PASSWORD", "")
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
     db = os.getenv("POSTGRES_DB", "pipeline_db")
@@ -57,8 +57,8 @@ col_title, col_refresh = st.columns([4, 1])
 with col_title:
     st.title("📊 Encrypted Data Pipeline Monitor")
     st.caption(
-        "Live monitoring of customer application pipeline runs · "
-        "Northstar Financial · Running on Raspberry Pi 5"
+        "Live monitoring of customer application pipeline runs - "
+        "Northstar Financial - Running on Raspberry Pi 5"
     )
 with col_refresh:
     if st.button("🔄 Refresh"):
@@ -361,6 +361,6 @@ else:
 # ===== Footer =====
 st.divider()
 st.caption(
-    f"Dashboard last refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · "
-    "All data is synthetically generated · No real PII"
+    f"Dashboard last refreshed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - "
+    "All data is synthetically generated - No real PII"
 )
