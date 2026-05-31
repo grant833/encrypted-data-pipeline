@@ -29,7 +29,7 @@ A file arrives encrypted in the S3 inbound bucket. Airflow detects it, decrypts 
 - [ ] Phase 3 - GPG keys
 - [x] Phase 4 - Synthetic data generator
 - [x] Phase 5 - PostgreSQL schema
-- [ ] Phase 6 - Reject rules engine
+- [x] Phase 6 - Reject rules engine
 - [ ] Phase 7 - Suppression engine
 - [ ] Phase 8 - Identity resolution
 - [ ] Phase 9 - Warehouse loader
