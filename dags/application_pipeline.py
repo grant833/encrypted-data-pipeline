@@ -7,6 +7,11 @@ End-to-end encrypted, cloud-integrated:
     -> reject_rules -> suppression -> identity_resolution -> load -> audit
     -> encrypt_outbound (encrypts summary, uploads to S3 outbound bucket)
     -> send_alert
+
+The load_to_warehouse task truncates customer_applications, rejected_records,
+and suppression_exclusions before each fresh load. The 'history' lives in
+pipeline_audit_log (never truncated), which is what the Streamlit dashboard
+queries for run-over-run trends.
 """
 
 import logging
@@ -17,7 +22,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 
 from airflow.decorators import dag, task
 
@@ -196,6 +201,17 @@ def customer_application_pipeline():
         t0 = time.time()
 
         df = pd.read_parquet(input_path)
+
+        # Truncate previous day's records before loading fresh data.
+        # The 'history' lives in pipeline_audit_log; this table holds the
+        # most recent batch only. This makes the scheduled 3am UTC run
+        # idempotent against the same incoming file.
+        with engine.begin() as conn:
+            conn.execute(text(
+                "TRUNCATE TABLE customer_applications, "
+                "suppression_exclusions, rejected_records RESTART IDENTITY CASCADE"
+            ))
+
         loaded_count = load_to_postgres(df, pipeline_run_id, engine)
 
         write_audit_log(
@@ -270,7 +286,6 @@ def customer_application_pipeline():
     def send_completion_alert(pipeline_run_id: str, audit_summary: dict) -> None:
         engine = _get_engine()
 
-        from sqlalchemy import text
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT
