@@ -11,24 +11,44 @@ from pipeline.loader import CUSTOMER_APPLICATIONS_COLUMNS, load_to_postgres
 @pytest.fixture
 def sample_df():
     """A small dataframe representing identity-resolved records."""
-    return pd.DataFrame([
-        {
-            "first_name": "Grant", "middle_initial": "B", "last_name": "Shimer",
-            "street_address": "123 Main St", "city": "Atlanta", "state": "GA",
-            "zip_code": "30309", "application_id": "APP-001",
-            "customer_id": "CUST-001", "identity_id": 1, "division_id": "500",
-            "submitted_date": "2026-01-01", "application_status": "approved",
-            "email_address": "grant@test.com", "date_of_birth": "2005-04-30",
-        },
-        {
-            "first_name": "Jane", "middle_initial": "A", "last_name": "Doe",
-            "street_address": "456 Oak Ave", "city": "Atlanta", "state": "GA",
-            "zip_code": "30309", "application_id": "APP-002",
-            "customer_id": "CUST-002", "identity_id": 2, "division_id": "500",
-            "submitted_date": "2026-01-02", "application_status": "declined",
-            "email_address": "jane@test.com", "date_of_birth": "1990-06-15",
-        },
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "first_name": "Grant",
+                "middle_initial": "B",
+                "last_name": "Shimer",
+                "street_address": "123 Main St",
+                "city": "Atlanta",
+                "state": "GA",
+                "zip_code": "30309",
+                "application_id": "APP-001",
+                "customer_id": "CUST-001",
+                "identity_id": 1,
+                "division_id": "500",
+                "submitted_date": "2026-01-01",
+                "application_status": "approved",
+                "email_address": "grant@test.com",
+                "date_of_birth": "2005-04-30",
+            },
+            {
+                "first_name": "Jane",
+                "middle_initial": "A",
+                "last_name": "Doe",
+                "street_address": "456 Oak Ave",
+                "city": "Atlanta",
+                "state": "GA",
+                "zip_code": "30309",
+                "application_id": "APP-002",
+                "customer_id": "CUST-002",
+                "identity_id": 2,
+                "division_id": "500",
+                "submitted_date": "2026-01-02",
+                "application_status": "declined",
+                "email_address": "jane@test.com",
+                "date_of_birth": "1990-06-15",
+            },
+        ]
+    )
 
 
 def test_empty_dataframe_returns_zero():
@@ -74,11 +94,23 @@ def test_pipeline_run_id_added_to_records(sample_df):
 def test_columns_constant_covers_all_application_fields():
     """The columns constant should cover every required field on the target table."""
     expected_fields = {
-        "pipeline_run_id", "source_system",
-        "first_name", "middle_initial", "last_name", "street_address",
-        "city", "state", "zip_code", "application_id", "customer_id",
-        "identity_id", "division_id", "submitted_date", "application_status",
-        "email_address", "date_of_birth",
+        "pipeline_run_id",
+        "source_system",
+        "first_name",
+        "middle_initial",
+        "last_name",
+        "street_address",
+        "city",
+        "state",
+        "zip_code",
+        "application_id",
+        "customer_id",
+        "identity_id",
+        "division_id",
+        "submitted_date",
+        "application_status",
+        "email_address",
+        "date_of_birth",
     }
     assert set(CUSTOMER_APPLICATIONS_COLUMNS) == expected_fields
 
@@ -107,8 +139,11 @@ def test_extra_columns_are_filtered_out(sample_df):
 
 def test_chunk_size_creates_multiple_inserts():
     """Large dataframes should be inserted in multiple chunks."""
-    sample_cols = [c for c in CUSTOMER_APPLICATIONS_COLUMNS
-                   if c not in ("pipeline_run_id", "source_system")]
+    sample_cols = [
+        c
+        for c in CUSTOMER_APPLICATIONS_COLUMNS
+        if c not in ("pipeline_run_id", "source_system")
+    ]
     rows = [{col: f"val{i}" for col in sample_cols} for i in range(12)]
     df = pd.DataFrame(rows)
 

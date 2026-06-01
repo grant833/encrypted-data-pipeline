@@ -141,17 +141,20 @@ def write_audit_log(
     """)
 
     with engine.begin() as conn:
-        conn.execute(insert_sql, {
-            "pipeline_run_id": pipeline_run_id,
-            "feed_name": feed_name,
-            "stage": stage,
-            "record_count": record_count,
-            "rejected_count": rejected_count,
-            "suppressed_count": suppressed_count,
-            "runtime_seconds": runtime_seconds,
-            "status": status,
-            "error_message": error_message,
-        })
+        conn.execute(
+            insert_sql,
+            {
+                "pipeline_run_id": pipeline_run_id,
+                "feed_name": feed_name,
+                "stage": stage,
+                "record_count": record_count,
+                "rejected_count": rejected_count,
+                "suppressed_count": suppressed_count,
+                "runtime_seconds": runtime_seconds,
+                "status": status,
+                "error_message": error_message,
+            },
+        )
 
 
 def check_volume_anomaly(

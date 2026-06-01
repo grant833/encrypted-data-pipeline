@@ -1,13 +1,12 @@
 """Tests for the identity resolution layer."""
 
-
 from pipeline.identity_resolution import (
     normalize_field,
     compute_identity_hash,
 )
 
-
 # ===== normalize_field tests =====
+
 
 def test_normalize_lowercases():
     assert normalize_field("Grant") == "grant"
@@ -37,11 +36,14 @@ def test_normalize_keeps_digits():
 
 # ===== compute_identity_hash tests =====
 
+
 def test_identical_records_produce_same_hash():
     """Two identical records should hash to the same fingerprint."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = r1.copy()
@@ -51,13 +53,17 @@ def test_identical_records_produce_same_hash():
 def test_different_records_produce_different_hashes():
     """Different identity fields should hash to different fingerprints."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "456 Oak Ave", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "456 Oak Ave",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     assert compute_identity_hash(r1) != compute_identity_hash(r2)
@@ -66,13 +72,17 @@ def test_different_records_produce_different_hashes():
 def test_case_insensitive_matching():
     """Case differences in name fields should not produce different hashes."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = {
-        "first_name": "GRANT", "last_name": "shimer",
-        "street_address": "123 main st", "zip_code": "30309",
+        "first_name": "GRANT",
+        "last_name": "shimer",
+        "street_address": "123 main st",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     assert compute_identity_hash(r1) == compute_identity_hash(r2)
@@ -81,13 +91,17 @@ def test_case_insensitive_matching():
 def test_whitespace_doesnt_affect_hash():
     """Extra whitespace should be ignored."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = {
-        "first_name": "  Grant  ", "last_name": "Shimer  ",
-        "street_address": "  123 Main St", "zip_code": "30309",
+        "first_name": "  Grant  ",
+        "last_name": "Shimer  ",
+        "street_address": "  123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     assert compute_identity_hash(r1) == compute_identity_hash(r2)
@@ -96,13 +110,17 @@ def test_whitespace_doesnt_affect_hash():
 def test_punctuation_doesnt_affect_hash():
     """Punctuation should be normalized away."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St.", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St.",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     assert compute_identity_hash(r1) == compute_identity_hash(r2)
@@ -111,13 +129,17 @@ def test_punctuation_doesnt_affect_hash():
 def test_only_year_of_birth_matters_not_full_date():
     """Two records with same year but different month/day should match."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-12-15",
     }
     assert compute_identity_hash(r1) == compute_identity_hash(r2)
@@ -126,13 +148,17 @@ def test_only_year_of_birth_matters_not_full_date():
 def test_different_year_produces_different_hash():
     """Different year of birth should produce different hashes."""
     r1 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     r2 = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "1985-04-30",
     }
     assert compute_identity_hash(r1) != compute_identity_hash(r2)
@@ -141,8 +167,10 @@ def test_different_year_produces_different_hash():
 def test_hash_is_sha256_length():
     """Hash should be a 64-character hex SHA-256."""
     r = {
-        "first_name": "Grant", "last_name": "Shimer",
-        "street_address": "123 Main St", "zip_code": "30309",
+        "first_name": "Grant",
+        "last_name": "Shimer",
+        "street_address": "123 Main St",
+        "zip_code": "30309",
         "date_of_birth": "2005-04-30",
     }
     h = compute_identity_hash(r)

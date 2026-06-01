@@ -143,7 +143,9 @@ class IdentityResolver:
     def _build_identity_record(self, record, identity_hash: str) -> dict:
         """Build a row dict for inserting into the identities table."""
         dob = record.get("date_of_birth", "")
-        year_of_birth = dob[:4] if dob and isinstance(dob, str) and len(dob) >= 4 else None
+        year_of_birth = (
+            dob[:4] if dob and isinstance(dob, str) and len(dob) >= 4 else None
+        )
 
         return {
             "identity_hash": identity_hash,

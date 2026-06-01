@@ -103,9 +103,7 @@ def customer_application_pipeline():
 
         latest = get_latest_object(inbound_bucket)
         if not latest:
-            raise FileNotFoundError(
-                f"No objects found in s3://{inbound_bucket}/"
-            )
+            raise FileNotFoundError(f"No objects found in s3://{inbound_bucket}/")
 
         logger.info(
             f"Latest inbound: {latest['Key']} "
@@ -115,7 +113,9 @@ def customer_application_pipeline():
         encrypted_path = _temp_path(pipeline_run_id, "encrypted_input", ext="pgp")
         ok = s3_download(inbound_bucket, latest["Key"], encrypted_path)
         if not ok:
-            raise RuntimeError(f"Failed to download s3://{inbound_bucket}/{latest['Key']}")
+            raise RuntimeError(
+                f"Failed to download s3://{inbound_bucket}/{latest['Key']}"
+            )
 
         decrypted_path = _temp_path(pipeline_run_id, "decrypted_input", ext="txt")
         ok = decrypt_file(encrypted_path, decrypted_path)
@@ -144,8 +144,11 @@ def customer_application_pipeline():
         passed, rejected = reject_engine.apply_rules(df)
 
         write_audit_log(
-            pipeline_run_id, FEED_NAME, "reject_rules",
-            len(passed), engine,
+            pipeline_run_id,
+            FEED_NAME,
+            "reject_rules",
+            len(passed),
+            engine,
             rejected_count=len(rejected),
             runtime_seconds=time.time() - t0,
         )
@@ -164,8 +167,11 @@ def customer_application_pipeline():
         included, excluded = suppression_engine.apply_suppressions(df)
 
         write_audit_log(
-            pipeline_run_id, FEED_NAME, "suppression",
-            len(included), engine,
+            pipeline_run_id,
+            FEED_NAME,
+            "suppression",
+            len(included),
+            engine,
             suppressed_count=len(excluded),
             runtime_seconds=time.time() - t0,
         )
@@ -184,8 +190,11 @@ def customer_application_pipeline():
         resolved = resolver.resolve_identities(df)
 
         write_audit_log(
-            pipeline_run_id, FEED_NAME, "identity_resolution",
-            len(resolved), engine,
+            pipeline_run_id,
+            FEED_NAME,
+            "identity_resolution",
+            len(resolved),
+            engine,
             runtime_seconds=time.time() - t0,
         )
 
@@ -205,16 +214,21 @@ def customer_application_pipeline():
         # most recent batch only. This makes the scheduled 3am UTC run
         # idempotent against the same incoming file.
         with engine.begin() as conn:
-            conn.execute(text(
-                "TRUNCATE TABLE customer_applications, "
-                "suppression_exclusions, rejected_records RESTART IDENTITY CASCADE"
-            ))
+            conn.execute(
+                text(
+                    "TRUNCATE TABLE customer_applications, "
+                    "suppression_exclusions, rejected_records RESTART IDENTITY CASCADE"
+                )
+            )
 
         loaded_count = load_to_postgres(df, pipeline_run_id, engine)
 
         write_audit_log(
-            pipeline_run_id, FEED_NAME, "load",
-            loaded_count, engine,
+            pipeline_run_id,
+            FEED_NAME,
+            "load",
+            loaded_count,
+            engine,
             runtime_seconds=time.time() - t0,
         )
         return loaded_count
@@ -226,8 +240,11 @@ def customer_application_pipeline():
 
         summary = {
             "pipeline_run_id": pipeline_run_id,
-            "total_loaded": int(results["total_loaded"]["count"].iloc[0])
-                            if not results["total_loaded"].empty else 0,
+            "total_loaded": (
+                int(results["total_loaded"]["count"].iloc[0])
+                if not results["total_loaded"].empty
+                else 0
+            ),
         }
 
         if not results["identity_match_rate"].empty:
@@ -260,7 +277,9 @@ def customer_application_pipeline():
             f.write("=" * 50 + "\n")
             f.write(f"Run ID:           {pipeline_run_id}\n")
             f.write(f"Records Loaded:   {audit_summary.get('total_loaded', 0):,}\n")
-            f.write(f"Match Rate:       {audit_summary.get('match_rate_pct', 0):.2f}%\n")
+            f.write(
+                f"Match Rate:       {audit_summary.get('match_rate_pct', 0):.2f}%\n"
+            )
             f.write(f"New Identities:   {audit_summary.get('new_identities', 0):,}\n")
             f.write(f"Generated:        {datetime.utcnow().isoformat()}Z\n")
 
@@ -282,14 +301,17 @@ def customer_application_pipeline():
         engine = _get_engine()
 
         with engine.connect() as conn:
-            result = conn.execute(text("""
+            result = conn.execute(
+                text("""
                 SELECT
                     SUM(runtime_seconds) AS total_runtime,
                     SUM(rejected_count) AS total_rejected,
                     SUM(suppressed_count) AS total_suppressed
                 FROM pipeline_audit_log
                 WHERE pipeline_run_id = :run_id
-            """), {"run_id": pipeline_run_id}).fetchone()
+            """),
+                {"run_id": pipeline_run_id},
+            ).fetchone()
 
         total_runtime = float(result[0] or 0)
         total_rejected = int(result[1] or 0)

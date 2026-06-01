@@ -13,18 +13,45 @@ from pipeline.reject_rules import (
 @pytest.fixture
 def sample_df():
     """A small dataframe with known good and bad records."""
-    return pd.DataFrame([
-        {"application_id": "APP-001", "state": "GA", "application_status": "approved",
-         "email_address": "ok@test.com", "zip_code": "30309"},
-        {"application_id": "",        "state": "GA", "application_status": "approved",
-         "email_address": "missing@test.com", "zip_code": "30309"},
-        {"application_id": "APP-002", "state": "GEORGIA", "application_status": "approved",
-         "email_address": "ok@test.com", "zip_code": "30309"},
-        {"application_id": "APP-003", "state": "GA", "application_status": "INVALID",
-         "email_address": "ok@test.com", "zip_code": "30309"},
-        {"application_id": "APP-004", "state": "GA", "application_status": "approved",
-         "email_address": "ok@test.com", "zip_code": "ABCDE"},
-    ])
+    return pd.DataFrame(
+        [
+            {
+                "application_id": "APP-001",
+                "state": "GA",
+                "application_status": "approved",
+                "email_address": "ok@test.com",
+                "zip_code": "30309",
+            },
+            {
+                "application_id": "",
+                "state": "GA",
+                "application_status": "approved",
+                "email_address": "missing@test.com",
+                "zip_code": "30309",
+            },
+            {
+                "application_id": "APP-002",
+                "state": "GEORGIA",
+                "application_status": "approved",
+                "email_address": "ok@test.com",
+                "zip_code": "30309",
+            },
+            {
+                "application_id": "APP-003",
+                "state": "GA",
+                "application_status": "INVALID",
+                "email_address": "ok@test.com",
+                "zip_code": "30309",
+            },
+            {
+                "application_id": "APP-004",
+                "state": "GA",
+                "application_status": "approved",
+                "email_address": "ok@test.com",
+                "zip_code": "ABCDE",
+            },
+        ]
+    )
 
 
 def test_required_field_rejects_nulls(sample_df):
@@ -52,8 +79,14 @@ def test_max_length_rejects_oversize(sample_df):
 def test_valid_values_rejects_invalid(sample_df):
     """A valid_values rule should reject out-of-set values."""
     engine = PreProcessRejectEngine(
-        [RejectRule("application_status", "valid_values",
-                    ["approved", "declined", "under_review"], "bad status")],
+        [
+            RejectRule(
+                "application_status",
+                "valid_values",
+                ["approved", "declined", "under_review"],
+                "bad status",
+            )
+        ],
         reject_threshold=1.0,
     )
     passed, rejected = engine.apply_rules(sample_df)
@@ -77,8 +110,12 @@ def test_multiple_rules_catch_all_bad_records(sample_df):
     rules = [
         RejectRule("application_id", "required", None, "ID required"),
         RejectRule("state", "max_length", 2, "state too long"),
-        RejectRule("application_status", "valid_values",
-                   ["approved", "declined", "under_review"], "bad status"),
+        RejectRule(
+            "application_status",
+            "valid_values",
+            ["approved", "declined", "under_review"],
+            "bad status",
+        ),
         RejectRule("zip_code", "format", r"^\d{5}$", "bad zip"),
     ]
     engine = PreProcessRejectEngine(rules, reject_threshold=1.0)
@@ -89,11 +126,13 @@ def test_multiple_rules_catch_all_bad_records(sample_df):
 
 def test_threshold_exceeded_raises():
     """If reject rate exceeds threshold, the engine should raise."""
-    df = pd.DataFrame([
-        {"application_id": ""},
-        {"application_id": ""},
-        {"application_id": "APP-001"},
-    ])
+    df = pd.DataFrame(
+        [
+            {"application_id": ""},
+            {"application_id": ""},
+            {"application_id": "APP-001"},
+        ]
+    )
     engine = PreProcessRejectEngine(
         [RejectRule("application_id", "required", None, "ID required")],
         reject_threshold=0.10,
@@ -128,8 +167,12 @@ def test_record_only_flagged_by_first_failing_rule(sample_df):
     """A record failing multiple rules should be flagged by the first failure only."""
     rules = [
         RejectRule("application_id", "required", None, "ID required"),
-        RejectRule("application_status", "valid_values",
-                   ["approved", "declined", "under_review"], "bad status"),
+        RejectRule(
+            "application_status",
+            "valid_values",
+            ["approved", "declined", "under_review"],
+            "bad status",
+        ),
     ]
     # Modify one record to fail BOTH rules
     df = sample_df.copy()

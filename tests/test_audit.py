@@ -28,12 +28,17 @@ def test_audit_queries_dict_has_expected_keys():
 def test_audit_queries_are_parameterized():
     """Every audit query that filters by run should use the :run_id parameter."""
     queries_using_run_id = [
-        "total_loaded", "status_breakdown", "identity_match_rate",
-        "suppression_summary", "reject_breakdown", "state_distribution",
+        "total_loaded",
+        "status_breakdown",
+        "identity_match_rate",
+        "suppression_summary",
+        "reject_breakdown",
+        "state_distribution",
     ]
     for key in queries_using_run_id:
-        assert ":run_id" in AUDIT_QUERIES[key], \
-            f"Query '{key}' should use :run_id parameter to prevent SQL injection"
+        assert (
+            ":run_id" in AUDIT_QUERIES[key]
+        ), f"Query '{key}' should use :run_id parameter to prevent SQL injection"
 
 
 def test_write_audit_log_calls_execute():
@@ -109,7 +114,10 @@ def test_volume_anomaly_detects_drop():
     mock_conn.execute.return_value.fetchone.return_value = (100000,)
 
     result = check_volume_anomaly(
-        "customer_applications", 50000, fake_engine, threshold_pct=0.40,
+        "customer_applications",
+        50000,
+        fake_engine,
+        threshold_pct=0.40,
     )
 
     assert result["is_anomalous"] is True
@@ -127,7 +135,10 @@ def test_volume_anomaly_normal_volume_is_not_flagged():
 
     # 10% above baseline — within 40% threshold
     result = check_volume_anomaly(
-        "customer_applications", 55000, fake_engine, threshold_pct=0.40,
+        "customer_applications",
+        55000,
+        fake_engine,
+        threshold_pct=0.40,
     )
 
     assert result["is_anomalous"] is False

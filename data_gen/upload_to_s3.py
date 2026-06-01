@@ -47,7 +47,9 @@ def main():
 
     # Encrypt to a temp .pgp file
     with tempfile.NamedTemporaryFile(
-        suffix=".pgp", delete=False, dir="/tmp",
+        suffix=".pgp",
+        delete=False,
+        dir="/tmp",
     ) as tmp:
         encrypted_tmp = tmp.name
 

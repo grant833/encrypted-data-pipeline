@@ -50,9 +50,15 @@ def generate_application_record() -> dict:
         "application_id": generate_application_id(),
         "customer_id": generate_customer_id(),
         "division_id": random.randint(100, 999),
-        "submitted_date": fake.date_between(start_date="-1y", end_date="today").isoformat(),
-        "application_status": random.choices(["approved", "declined", "under_review"], weights=[70, 20, 10])[0],
-        "email_address": f"{first.lower()}.{last.lower()}@{fake.free_email_domain()}"[:80],
+        "submitted_date": fake.date_between(
+            start_date="-1y", end_date="today"
+        ).isoformat(),
+        "application_status": random.choices(
+            ["approved", "declined", "under_review"], weights=[70, 20, 10]
+        )[0],
+        "email_address": f"{first.lower()}.{last.lower()}@{fake.free_email_domain()}"[
+            :80
+        ],
         "date_of_birth": fake.date_of_birth(minimum_age=18, maximum_age=85).isoformat(),
     }
 
@@ -69,13 +75,15 @@ def generate_suppression_file(num_records: int = 500) -> pd.DataFrame:
     for i in range(num_records):
         first = fake.first_name()
         last = fake.last_name()
-        records.append({
-            "case_number": f"PRIV-{str(i).zfill(8)}",
-            "email_address": f"{first.lower()}.{last.lower()}@{fake.free_email_domain()}",
-            "first_name": first,
-            "last_name": last,
-            "request_type": random.choice(["opt_out", "delete"]),
-        })
+        records.append(
+            {
+                "case_number": f"PRIV-{str(i).zfill(8)}",
+                "email_address": f"{first.lower()}.{last.lower()}@{fake.free_email_domain()}",
+                "first_name": first,
+                "last_name": last,
+                "request_type": random.choice(["opt_out", "delete"]),
+            }
+        )
     return pd.DataFrame(records)
 
 
@@ -83,15 +91,19 @@ def generate_fraud_list_file(num_records: int = 100) -> pd.DataFrame:
     """Generate a fraud watchlist file."""
     records = []
     for _ in range(num_records):
-        records.append({
-            "application_id": generate_application_id(),
-            "flag_reason": random.choice([
-                "fraudulent_application",
-                "repeated_declines",
-                "identity_theft_flag",
-                "synthetic_identity",
-            ]),
-        })
+        records.append(
+            {
+                "application_id": generate_application_id(),
+                "flag_reason": random.choice(
+                    [
+                        "fraudulent_application",
+                        "repeated_declines",
+                        "identity_theft_flag",
+                        "synthetic_identity",
+                    ]
+                ),
+            }
+        )
     return pd.DataFrame(records)
 
 

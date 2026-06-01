@@ -36,6 +36,7 @@ class RejectRule:
 
 class RejectThresholdExceededError(Exception):
     """Raised when the reject rate exceeds the configured threshold."""
+
     pass
 
 
@@ -75,7 +76,9 @@ class PreProcessRejectEngine:
 
             # Only flag records that haven't already been flagged
             new_failures = mask & df["reject_reason"].isna()
-            df.loc[new_failures, "reject_reason"] = rule.description or f"Failed {rule.rule_type} on {rule.field}"
+            df.loc[new_failures, "reject_reason"] = (
+                rule.description or f"Failed {rule.rule_type} on {rule.field}"
+            )
 
         passed = df[df["reject_reason"].isna()].drop(columns=["reject_reason"]).copy()
         rejected = df[df["reject_reason"].notna()].copy()
@@ -143,9 +146,12 @@ class PreProcessRejectEngine:
 
 CUSTOMER_APPLICATION_RULES: List[RejectRule] = [
     RejectRule("application_id", "required", None, "application_id cannot be null"),
-    RejectRule("application_status", "valid_values",
-               ["approved", "declined", "under_review"],
-               "Invalid application_status"),
+    RejectRule(
+        "application_status",
+        "valid_values",
+        ["approved", "declined", "under_review"],
+        "Invalid application_status",
+    ),
     RejectRule("state", "max_length", 2, "state must be 2 characters"),
     RejectRule("zip_code", "format", r"^\d{5}$", "zip_code must be 5 digits"),
     RejectRule("email_address", "max_length", 80, "email_address exceeds max length"),

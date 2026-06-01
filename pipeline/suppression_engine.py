@@ -60,9 +60,7 @@ class SuppressionEngine:
             logger.info(f"Loaded {len(keys):,} keys from {table}")
         return suppressions
 
-    def apply_suppressions(
-        self, df: pd.DataFrame
-    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def apply_suppressions(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         Apply all suppression checks and split the dataframe.
 
@@ -97,9 +95,11 @@ class SuppressionEngine:
             mask = field_upper.isin(supp_set) & df["suppression_source"].isna()
             df.loc[mask, "suppression_source"] = table
 
-        included = df[df["suppression_source"].isna()].drop(
-            columns=["suppression_source"]
-        ).copy()
+        included = (
+            df[df["suppression_source"].isna()]
+            .drop(columns=["suppression_source"])
+            .copy()
+        )
         excluded = df[df["suppression_source"].notna()].copy()
 
         suppression_rate = len(excluded) / len(df) if len(df) > 0 else 0
@@ -127,12 +127,14 @@ class SuppressionEngine:
 
         rows_to_insert = []
         for _, row in excluded_df.iterrows():
-            rows_to_insert.append({
-                "pipeline_run_id": pipeline_run_id,
-                "application_id": row.get("application_id"),
-                "email_address": row.get("email_address"),
-                "suppression_source": row["suppression_source"],
-            })
+            rows_to_insert.append(
+                {
+                    "pipeline_run_id": pipeline_run_id,
+                    "application_id": row.get("application_id"),
+                    "email_address": row.get("email_address"),
+                    "suppression_source": row["suppression_source"],
+                }
+            )
 
         insert_sql = text("""
             INSERT INTO suppression_exclusions
