@@ -7,7 +7,6 @@ request, or fraud flag are removed from the pipeline.
 """
 
 import logging
-from datetime import datetime
 from typing import Dict, Tuple
 
 import pandas as pd

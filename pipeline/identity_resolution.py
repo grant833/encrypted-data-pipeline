@@ -9,7 +9,6 @@ on normalized fields (name + address + date of birth).
 import hashlib
 import logging
 import re
-from typing import Optional
 
 import pandas as pd
 from sqlalchemy.engine import Engine

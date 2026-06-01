@@ -6,7 +6,6 @@ Core, which is significantly faster than row-by-row INSERTs.
 """
 
 import logging
-from typing import Dict
 
 import pandas as pd
 from sqlalchemy import MetaData, Table

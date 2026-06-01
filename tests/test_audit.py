@@ -1,9 +1,8 @@
 """Tests for the audit layer."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
-import pytest
 
 from pipeline.audit import (
     AUDIT_QUERIES,

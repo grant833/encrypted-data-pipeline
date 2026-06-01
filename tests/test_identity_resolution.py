@@ -1,6 +1,5 @@
 """Tests for the identity resolution layer."""
 
-import pytest
 
 from pipeline.identity_resolution import (
     normalize_field,

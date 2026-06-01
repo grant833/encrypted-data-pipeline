@@ -72,7 +72,7 @@ def main():
     # Cleanup temp file
     os.unlink(encrypted_tmp)
     print(f"\n✓ Encrypted file delivered to s3://{inbound_bucket}/{s3_key}")
-    print(f"  Ready for pipeline ingestion.")
+    print("  Ready for pipeline ingestion.")
 
 
 if __name__ == "__main__":
