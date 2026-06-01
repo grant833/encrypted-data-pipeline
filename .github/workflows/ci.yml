@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff black pytest pandas faker
+          pip install ruff black pytest pandas faker sqlalchemy psycopg2-binary python-dotenv slack-sdk boto3 python-gnupg
 
       - name: Lint with ruff
         run: ruff check pipeline/ dags/ data_gen/ tests/
